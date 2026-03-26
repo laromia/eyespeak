@@ -1,11 +1,15 @@
 import streamlit as st
-from login_page import login_page
 import cv2
 import time
 import numpy as np
 from gtts import gTTS
 import os
 import pygame
+
+# Streamlit Page Config MUST be the first command
+st.set_page_config(page_title="EyeSpeak - Morse Eye Communication", layout="wide")
+
+from login_page import login_page
 from eye_blink_detector import EyeBlinkDetector
 from morse_translator import get_char_from_sequence, MORSE_CODE_DICT
 
@@ -47,6 +51,13 @@ SUGGESTIONS = [
     "Ok", "Alright", "Wait", "Later", "Now", "Never", "Always", "Sometimes", "More", "Less", "Too much", "Enough"
 ]
 
+CONTROL_COMMANDS = {
+    "...---...": "TOGGLE_CAMERA",   # SOS
+    ".-.-.": "READ_TEXT",          # AR
+    "-.-.-": "CLEAR_TEXT",         # Custom
+    "----": "RESET_ALL"            # Custom
+}
+
 
 def get_suggestions(text):
     if not text:
@@ -54,17 +65,41 @@ def get_suggestions(text):
     text = text.lower()
     return [s for s in SUGGESTIONS if s.lower().startswith(text) and s.lower() != text]
 
+# Session State Initialization
+if 'translated_text' not in st.session_state:
+    st.session_state.translated_text = ""
+if 'current_morse' not in st.session_state:
+    st.session_state.current_morse = ""
+if 'last_blink_time' not in st.session_state:
+    st.session_state.last_blink_time = time.time()
+if 'is_running' not in st.session_state:
+    st.session_state.is_running = False
+    st.session_state.auto_start_time = time.time()
+if 'last_suggestions' not in st.session_state:
+    st.session_state.last_suggestions = []
+
+# If the user is not logged in -> show login system
 if "user" not in st.session_state:
-
     login_page()
-
     st.stop()
 
-# Initialize pygame for audio
-pygame.mixer.init()
+# ⏳ Auto-start camera after short delay (only on main page)
+if not st.session_state.is_running:
+    elapsed = time.time() - st.session_state.auto_start_time
+    if elapsed > 1.5:
+        st.session_state.is_running = True
+        st.toast("Camera started automatically 🎥")
+        st.rerun()
+    else:
+        st.info(f"System ready. Starting camera in {max(0, 1.5 - elapsed):.1f}s...")
+        time.sleep(max(0, 1.5 - elapsed))
+        st.session_state.is_running = True
+        st.toast("Camera started automatically 🎥")
+        st.rerun()
 
-# Streamlit Page Config
-st.set_page_config(page_title="EyeSpeak - Morse Eye Communication", layout="wide")
+# Initialize pygame for audio
+if not pygame.mixer.get_init():
+    pygame.mixer.init()
 
 # Custom CSS for styling
 st.markdown("""
@@ -107,31 +142,28 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Session State Initialization
-if 'translated_text' not in st.session_state:
-    st.session_state.translated_text = ""
-if 'current_morse' not in st.session_state:
-    st.session_state.current_morse = ""
-if 'last_blink_time' not in st.session_state:
-    st.session_state.last_blink_time = time.time()
-if 'is_running' not in st.session_state:
-    st.session_state.is_running = False
-if 'last_suggestions' not in st.session_state:
-    st.session_state.last_suggestions = []
-
 # Sidebar: Settings and Info
 with st.sidebar:
     st.title(" Morse Code Guide")
     st.info("Blink dots (.) and dashes (-) to type.")
-    
-    # Define constants directly since sliders are removed
+
     blink_thresh = 0.15
     min_blink = 0.20
     short_blink = 0.4
     long_blink = 1.2
     char_pause = 2.0
     word_pause = 5.0
-    
+
+    st.divider()
+
+    st.subheader("🎮 Blink Controls")
+    st.markdown("""
+    - **Start/Stop Camera** → `...---...` (SOS)  
+    - **Read Text 🔊** → `.-.-.`  
+    - **Clear Text 🧹** → `-.-.-`  
+    - **Reset All 🔄** → `----`  
+    """)
+
     st.divider()
     # Display full Morse code dictionary in a cleaner way
     cols = st.columns(2)
@@ -150,6 +182,7 @@ with st.sidebar:
 
 # Main App Layout
 st.title("EyeSpeak – Communication Assistance")
+st.write(f"Welcome back, **{st.session_state.user}**!")
 st.write("Communicate by blinking: short for '.', long for '-'.")
 
 col1, col2 = st.columns([2, 1])
@@ -247,26 +280,53 @@ if st.session_state.is_running:
         
         if st.session_state.current_morse != "":
             if time_since_last > char_pause:
-                # Fin d'un caractère (lettre)
-                char = get_char_from_sequence(st.session_state.current_morse)
+                sequence = st.session_state.current_morse
                 
-                # Check for suggestion selection (Morse "1" to "5")
-                suggestions = st.session_state.last_suggestions
-                if char == '1' and len(suggestions) >= 1:
-                    st.session_state.translated_text = suggestions[0]
-                elif char == '2' and len(suggestions) >= 2:
-                    st.session_state.translated_text = suggestions[1]
-                elif char == '3' and len(suggestions) >= 3:
-                    st.session_state.translated_text = suggestions[2]
-                elif char == '4' and len(suggestions) >= 4:
-                    st.session_state.translated_text = suggestions[3]
-                elif char == '5' and len(suggestions) >= 5:
-                    st.session_state.translated_text = suggestions[4]
-                elif char != "?":
-                    st.session_state.translated_text += char
+                # Check for Control Commands first
+                if sequence in CONTROL_COMMANDS:
+                    command = CONTROL_COMMANDS[sequence]
+                    if command == "TOGGLE_CAMERA":
+                        st.session_state.is_running = not st.session_state.is_running
+                        st.toast("Camera toggled 👁️")
+                    elif command == "READ_TEXT":
+                        if st.session_state.translated_text:
+                            try:
+                                tts = gTTS(text=st.session_state.translated_text, lang='en')
+                                tts.save("temp_voice.mp3")
+                                st.audio("temp_voice.mp3", autoplay=True)
+                                st.toast("Reading text 🔊")
+                            except Exception as e:
+                                st.error(f"TTS Error: {e}")
+                    elif command == "CLEAR_TEXT":
+                        st.session_state.translated_text = ""
+                        st.toast("Text cleared 🧹")
+                    elif command == "RESET_ALL":
+                        st.session_state.translated_text = ""
+                        st.session_state.current_morse = ""
+                        st.toast("Reset done 🔄")
+                else:
+                    # Normal character handling
+                    char = get_char_from_sequence(sequence)
+                    
+                    # Suggestions selection (1-5)
+                    suggestions = st.session_state.last_suggestions
+                    if char == '1' and len(suggestions) >= 1:
+                        st.session_state.translated_text = suggestions[0]
+                    elif char == '2' and len(suggestions) >= 2:
+                        st.session_state.translated_text = suggestions[1]
+                    elif char == '3' and len(suggestions) >= 3:
+                        st.session_state.translated_text = suggestions[2]
+                    elif char == '4' and len(suggestions) >= 4:
+                        st.session_state.translated_text = suggestions[3]
+                    elif char == '5' and len(suggestions) >= 5:
+                        st.session_state.translated_text = suggestions[4]
+                    elif char != "?":
+                        st.session_state.translated_text += char
                 
+                # Reset current morse after processing
                 st.session_state.current_morse = ""
-                st.session_state.last_blink_time = current_time # Reset pour détecter la fin du mot
+                st.session_state.last_blink_time = current_time
+        
         elif st.session_state.translated_text != "" and not st.session_state.translated_text.endswith(" "):
             if time_since_last > word_pause:
                 # Fin d'un mot (espace automatique)
@@ -284,9 +344,8 @@ if st.session_state.is_running:
             
         if st.session_state.last_suggestions:
             sug_html = ""
-            for i, s in enumerate(st.session_state.last_suggestions): # Show top 5
-                # Assign Morse "1" to "5" to select suggestions
-                morse_hint = MORSE_CODE_DICT[str(i+1)]
+            for i, s in enumerate(st.session_state.last_suggestions):
+                morse_hint = MORSE_CODE_DICT.get(str(i+1), "")
                 sug_html += f'<div class="suggestion-pill"><span class="suggestion-morse">{morse_hint}</span>{s}</div>'
             suggestions_container.markdown(sug_html, unsafe_allow_html=True)
         else:
