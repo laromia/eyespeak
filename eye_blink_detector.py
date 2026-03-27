@@ -11,10 +11,13 @@ class EyeBlinkDetector:
         from mediapipe.tasks import python
         from mediapipe.tasks.python import vision
         
-        self.model_path = 'face_landmarker.task'
+        self.model_path = os.path.join(os.path.dirname(__file__), 'face_landmarker.task')
         self._ensure_model_exists()
         
-        base_options = python.BaseOptions(model_asset_path=self.model_path)
+        with open(self.model_path, 'rb') as f:
+            model_data = f.read()
+        
+        base_options = python.BaseOptions(model_asset_buffer=model_data)
         options = vision.FaceLandmarkerOptions(
             base_options=base_options,
             output_face_blendshapes=True,

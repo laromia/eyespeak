@@ -27,7 +27,7 @@ def _extract_face_roi(frame):
     y = max(0, int(bbox.ymin * h))
     bw = int(bbox.width * w)
     bh = int(bbox.height * h)
-    roi = frame[y:y+bh, x:x+bw]
+    roi = frame[max(0,y):min(h,y+bh), max(0,x):min(w,x+bw)]
     if roi.size == 0:
         return None
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
@@ -54,7 +54,7 @@ def register_face(frame, username):
         return False, "No face detected"
     db = load_db()
     images = db.get(username, [])
-    images.append(roi)
+    images.append(roi.copy())
     db[username] = images
     save_db(db)
     return True, "Face registered successfully"
@@ -65,11 +65,12 @@ def recognize_face(frame):
     db = load_db()
 
     if len(db) == 0:
-        return None
+        return "NO_DB"
 
     roi = _extract_face_roi(frame)
     if roi is None:
-        return None
+        return "NO_FACE"
+    
     X = []
     y = []
     labels = {}
@@ -88,7 +89,7 @@ def recognize_face(frame):
         recognizer = cv2.face.LBPHFaceRecognizer_create()
         recognizer.train(X, np.array(y, dtype=np.int32))
         label, confidence = recognizer.predict(roi)
-        if confidence < 80 and label in labels:
+        if confidence < 60 and label in labels:
             return labels[label]
     except Exception:
         best_name = None
