@@ -6,6 +6,7 @@ from gtts import gTTS
 import os
 import pygame
 from helper_page import helper_page, load_helpers, load_messages, save_messages
+from notification_utils import send_email_notification, send_sms_notification, send_whatsapp_notification
 
 # Streamlit Page Config MUST be the first command
 st.set_page_config(page_title="EyeSpeak - Morse Eye Communication", layout="wide")
@@ -186,14 +187,65 @@ with col2:
 
     if st.button("📩 Send to Helper"):
         if st.session_state.translated_text:
+            patient_id = st.session_state.user.strip()
+            msg_content = st.session_state.translated_text
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
+            # 1. Save message to DB
             msgs = load_messages()
             msgs.append({
-                "patient": st.session_state.user.strip(),
-                "message": st.session_state.translated_text,
-                "time": time.strftime("%Y-%m-%d %H:%M:%S")
+                "patient": patient_id,
+                "message": msg_content,
+                "time": timestamp
             })
             save_messages(msgs)
-            st.success("Message sent to your helper! ✅")
+            st.success("Message saved! ✅")
+
+            # 2. Find linked helper and send notifications
+            helpers_db = load_helpers()
+            linked_helper = None
+            for h_email, h_data in helpers_db.items():
+                if h_data["patient"].strip().lower() == patient_id.lower():
+                    linked_helper = h_data
+                    break
+            
+            if linked_helper:
+                # 1. Send Email
+                success, email_msg = send_email_notification(
+                    linked_helper["email"],
+                    linked_helper["name"],
+                    patient_id,
+                    msg_content,
+                    timestamp
+                )
+                if success:
+                    st.success(f"Email sent to {linked_helper['name']}! 📧")
+                else:
+                    st.warning(f"Email notification failed: {email_msg}")
+                
+                # 2. Send WhatsApp (New Feature)
+                if linked_helper.get("phone"):
+                    wa_success, wa_msg = send_whatsapp_notification(
+                        linked_helper["phone"],
+                        linked_helper["name"],
+                        patient_id,
+                        msg_content,
+                        timestamp
+                    )
+                    if wa_success:
+                        st.success("WhatsApp notification sent! 📱")
+                    else:
+                        st.warning(f"WhatsApp failed: {wa_msg}")
+                
+                # 3. Send SMS (Optional Legacy)
+                if linked_helper.get("phone"):
+                    send_sms_notification(
+                        linked_helper["phone"],
+                        patient_id,
+                        msg_content
+                    )
+            else:
+                st.info("No linked helper found to notify.")
 
 # Processing Loop
 if st.session_state.is_running:
@@ -235,14 +287,56 @@ if st.session_state.is_running:
                 elif cmd == "CLEAR_TEXT": st.session_state.translated_text = ""
                 elif cmd == "SEND_TO_HELPER":
                     if st.session_state.translated_text:
+                        patient_id = st.session_state.user.strip()
+                        msg_content = st.session_state.translated_text
+                        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
+                        # 1. Save to DB
                         msgs = load_messages()
                         msgs.append({
-                            "patient": st.session_state.user.strip(),
-                            "message": st.session_state.translated_text,
-                            "time": time.strftime("%Y-%m-%d %H:%M:%S")
+                            "patient": patient_id,
+                            "message": msg_content,
+                            "time": timestamp
                         })
                         save_messages(msgs)
-                        st.toast("Message sent to helper! 📩")
+                        st.toast("Message saved! ✅")
+
+                        # 2. Notify Helper
+                        helpers_db = load_helpers()
+                        linked_helper = None
+                        for h_email, h_data in helpers_db.items():
+                            if h_data["patient"].strip().lower() == patient_id.lower():
+                                linked_helper = h_data
+                                break
+                        
+                        if linked_helper:
+                            # 1. Send Email
+                            send_email_notification(
+                                linked_helper["email"],
+                                linked_helper["name"],
+                                patient_id,
+                                msg_content,
+                                timestamp
+                            )
+                            # 2. Send WhatsApp
+                            if linked_helper.get("phone"):
+                                send_whatsapp_notification(
+                                    linked_helper["phone"],
+                                    linked_helper["name"],
+                                    patient_id,
+                                    msg_content,
+                                    timestamp
+                                )
+                            # 3. Send SMS
+                            if linked_helper.get("phone"):
+                                send_sms_notification(
+                                    linked_helper["phone"],
+                                    patient_id,
+                                    msg_content
+                                )
+                            st.toast("Helper notified via WhatsApp & Email! 📩")
+                        else:
+                            st.toast("No linked helper found.")
                 elif cmd == "RESET_ALL":
                     st.session_state.translated_text = ""
                     st.session_state.current_morse = ""

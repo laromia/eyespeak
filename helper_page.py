@@ -2,6 +2,7 @@ import streamlit as st
 import pickle
 import os
 import time
+import hashlib
 
 HELPERS_DB = "helpers_db.pkl"
 MESSAGES_DB = "messages_db.pkl"
@@ -26,6 +27,9 @@ def save_messages(msgs):
     with open(MESSAGES_DB, "wb") as f:
         pickle.dump(msgs, f)
 
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
 def helper_page():
     st.title("👨‍⚕️ Helper Dashboard")
     
@@ -36,38 +40,53 @@ def helper_page():
         with tab1:
             st.subheader("Login")
             email = st.text_input("Email", key="helper_login_email")
+            password = st.text_input("Password", type="password", key="helper_login_password")
+            
             if st.button("Login"):
                 db = load_helpers()
                 if email in db:
-                    st.session_state.helper_user = db[email]
-                    st.success(f"Logged in as {db[email]['name']}")
-                    st.rerun()
+                    user_data = db[email]
+                    
+                    # Backward compatibility check
+                    if "password" not in user_data:
+                        st.warning("⚠️ Please re-register (security update required).")
+                    else:
+                        hashed_input = hash_password(password)
+                        if hashed_input == user_data["password"]:
+                            st.session_state.helper_user = user_data
+                            st.success(f"Logged in as {user_data['name']}")
+                            st.rerun()
+                        else:
+                            st.error("Invalid email or password.")
                 else:
-                    st.error("Email not found. Please register.")
+                    st.error("Invalid email or password.")
                     
         with tab2:
             st.subheader("Register")
             new_name = st.text_input("Helper Name")
             new_email = st.text_input("Helper Email")
             new_phone = st.text_input("Helper Phone")
+            new_password = st.text_input("Password", type="password", key="helper_reg_password")
             
             st.info("⚠️ Enter the EXACT username the patient used during face registration.")
             target_patient = st.text_input("Patient Username to Link")
             
             if st.button("Register Helper"):
-                if new_email and new_name and target_patient:
+                if new_email and new_name and target_patient and new_password:
                     db = load_helpers()
+                    hashed_pw = hash_password(new_password)
                     db[new_email] = {
                         "name": new_name,
                         "email": new_email,
                         "phone": new_phone,
-                        "patient": target_patient.strip()
+                        "patient": target_patient.strip(),
+                        "password": hashed_pw
                     }
                     save_helpers(db)
-                    st.success(f"Helper {new_name} linked to Patient {target_patient}!")
+                    st.success(f"Helper {new_name} registered and linked to Patient {target_patient}!")
                     st.rerun()
                 else:
-                    st.error("Please fill in all fields.")
+                    st.error("Please fill in all fields including password.")
         st.stop()
 
     # Logged in Helper View

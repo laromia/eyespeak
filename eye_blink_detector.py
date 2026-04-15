@@ -45,8 +45,14 @@ class EyeBlinkDetector:
         self.blink_timestamps = []
 
     def _ensure_model_exists(self):
-        """Download the model if it's not present."""
-        if not os.path.exists(self.model_path):
+        """Download the model if it's not present or corrupted."""
+        # Expected size for the face_landmarker.task model
+        EXPECTED_SIZE = 3758596
+        
+        file_exists = os.path.exists(self.model_path)
+        file_size = os.path.getsize(self.model_path) if file_exists else 0
+        
+        if not file_exists or file_size < EXPECTED_SIZE:
             print(f"Downloading MediaPipe Face Landmarker model to {self.model_path}...")
             url = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
             urllib.request.urlretrieve(url, self.model_path)
